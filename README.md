@@ -4,3 +4,121 @@
 - 01_web_server_socket → Socket server + scraping
 - 02_flask_dasar → Belajar Flask dasar
 - 03_crud_app → CRUD aplikasi
+__________________________________________________________
+Modifikasi Code
+
+import socket
+import threading
+import os
+from urllib.parse import urlparse, parse_qs
+
+import requests
+from bs4 import BeautifulSoup
+import json
+
+HOST = 'localhost'
+PORT = 8081
+STATIC_DIR = 'www'
+
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+# ========================
+# SCRAPING FUNCTION
+# ========================
+def scraping_books():
+    url = "http://books.toscrape.com"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    books = soup.find_all("article", class_="product_pod")
+
+    data = []
+
+    for book in books[:5]:
+        title = book.h3.a["title"]
+        price = book.find("p", class_="price_color").text
+        rating = book.p["class"][1]
+
+        data.append({
+            "title": title,
+            "price": price,
+            "rating": rating
+        })
+
+    return data
+
+
+# ========================
+# HELPER
+# ========================
+def send_response(client_socket, status_code, content_type, content):
+    if isinstance(content, str):
+        content = content.encode('utf-8')
+
+    response = f"""HTTP/1.1 {status_code}
+Content-Type: {content_type}
+Content-Length: {len(content)}
+Connection: close
+
+""".encode('utf-8') + content
+
+    client_socket.sendall(response)
+
+
+# ========================
+# CLIENT HANDLER
+# ========================
+def handle_client(client_socket, client_address):
+    try:
+        request_data = client_socket.recv(4096).decode('utf-8', errors='ignore')
+        lines = request_data.split('\r\n')
+        path = lines[0].split(' ')[1]
+
+        print(f"{path} from {client_address}")
+
+        # HOME
+        if path == '/':
+            html = "<h1>Server Jalan</h1><p><a href='/stream'>Lihat Data Scraping</a></p>"
+            send_response(client_socket, "200 OK", "text/html", html)
+
+        elif path == '/stream':
+            data = scraping_books()
+            json_data = json.dumps(data, indent=4, ensure_ascii=False)
+
+            html = f"<pre>{json_data}</pre>"
+
+            send_response(
+                client_socket,
+                "200 OK",
+                "text/html",
+                html
+            )
+
+        # 404
+        else:
+            send_response(client_socket, "404 Not Found", "text/html", "<h1>404</h1>")
+
+    except Exception as e:
+        print("Error:", e)
+
+    finally:
+        client_socket.close()
+
+
+# ========================
+# SERVER
+# ========================
+def run_server():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((HOST, PORT))
+    server_socket.listen(5)
+
+    print(f"Server jalan di http://{HOST}:{PORT}")
+
+    while True:
+        client_socket, client_address = server_socket.accept()
+        threading.Thread(target=handle_client, args=(client_socket, client_address)).start()
+
+
+if __name__ == "__main__":
+    run_server()
